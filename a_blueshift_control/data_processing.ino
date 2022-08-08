@@ -13,7 +13,7 @@ void processData (const char line) {
      j - Rear battery %
      k - Backup system battery %
 
-     h - Humidity (R.H.%)
+     h - Humidity (R.H.%) (% * 2)
      t - Temperature (C * 2 + 50)
 
      s - Speed (km/h)
@@ -37,11 +37,13 @@ void processData (const char line) {
     case 'f':
       frameType = FRONTSERIAL.read();
       break;
-    case 'r':
-      frameType = REARSERIAL.read();
-      break;
     case 'd':
       frameType = DEBUGSERIAL.read();
+      break;
+
+     // Telemetry
+    case 't':
+      frameType = radioMessage[0];
       break;
   }
 
@@ -214,13 +216,14 @@ void sendMessage (String message, const char outputLine) {
       FRONTSERIAL.print(lengthChar);
       FRONTSERIAL.print(message);
       break;
-    case 'r':
-      REARSERIAL.print(lengthChar);
-      REARSERIAL.print(message);
-      break;
     case 'd':
       DEBUGSERIAL.print(lengthChar);
       DEBUGSERIAL.print(message);
+      break;
+
+    // Telemetry
+    case 't':
+      radioSend(String(lengthChar) + message);
       break;
   }
 
@@ -251,15 +254,6 @@ String readInput (char inputLine) {
 
       FRONTSERIAL.readBytes(temp, messageLength);
       break;
-    case 'r':
-      while (REARSERIAL.available() == 0) {
-        delayMicroseconds(10); // Wait for length character if needed
-      }
-      messageLength = REARSERIAL.read();
-      messageLength -= 31;
-
-      REARSERIAL.readBytes(temp, messageLength);
-      break;
     case 'd':
       while (DEBUGSERIAL.available() == 0) {
         delayMicroseconds(10); // Wait for length character if needed
@@ -268,6 +262,16 @@ String readInput (char inputLine) {
       messageLength -= 31;
 
       DEBUGSERIAL.readBytes(temp, messageLength);
+      break;
+
+    // Telemetry
+    case 't':
+      messageLength = byte(radioMessage[1]);
+      messageLength -= 31;
+
+      for (byte i = 0; i < messageLength; i++) {
+        temp[i] = radioMessage[i+2];
+      }
       break;
   }
 

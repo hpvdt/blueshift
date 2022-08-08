@@ -2,8 +2,7 @@
 #include "DHT.h" // Used for temperature and humidity
 
 #define FRONTSERIAL Serial1
-#define REARSERIAL Serial2
-#define GPSSERIAL Serial3
+#define GPSSERIAL Serial2
 #define DEBUGSERIAL Serial
 /* Serial Pins
    PA9 - TX1
@@ -17,11 +16,11 @@
 */
 
 // DEBUGGING MODE
-bool debugMode = true;      // In debug mode or not (copies all messages to debug serial line
+bool debugMode = false;      // In debug mode or not (copies all messages to debug serial line
 
-const long rpiBaud = 38400;  // Baudrate used with rpis
+const long rpiBaud = 115200;  // Baudrate used with rpis
 const long gpsBaud = 9600;    // Baudrate used with GPS
-const long debugBaud = 38400;  // Baudrate for debugging line
+const long debugBaud = 115200;  // Baudrate for debugging line
 
 /////////////////////////////////////////////////
 // Variables
@@ -56,13 +55,10 @@ byte testZ = 0;             // Used solely for echo tests
 
 //////////////////////////////////////////////////
 // Pin allocation
-const byte DHTPin = PB5;  // DHT sensor pin (temperature and humidity)
+const byte DHTPin = PB3;  // DHT sensor pin (temperature and humidity)
 const byte FBPin = PA0;   // Front battery pin (ADC)
-const byte RBPin = PA1;   // Rear battery pin (ADC)
-const byte SBPin = PA4;   // Spare battery pin (ADC)
-const byte encoderPin = PB8;   // Encoder interrupt pin
-const byte S50Pin = PB1;
-const byte S25Pin = PB0;
+const byte SBPin = PB0;   // Spare battery pin (ADC)
+const byte encoderPin = PB4;   // Encoder interrupt pin
 
 // Digital Humidity and Temperature setup
 DHT dht(DHTPin, DHT22); // Sets up sensor
@@ -90,35 +86,57 @@ unsigned long wheelTime = 0; // Check if wheel has timed out (stopped)
 const unsigned int wheelTimeout = 500; // Timeout period
 float previousSpeed = 0; // Stores speed for comparison
 
+////////////////////////////////////////////////////////////////
+// Telemetry related declarations
+#include <RF24-STM.h>
+
+const byte radioInteruptPin = PB5;
+const byte radioCSPin = PA4;
+const byte radioEnablePin = PA1;
+
+// Hardware configuration: Set up nRF24L01 radio on SPI bus plus pins 7 & 8
+RF24 radio(radioEnablePin, radioCSPin);
+bool recieverRole = true; // Are we the reciever? Vehicle is 'reciever', station is 'sender'
+
+// Communication pipes to use
+const uint64_t pipes[2] = { 0x1122334471LL, 0x112233447CLL };
+
+volatile bool recievedRadioData = false; // Used to record a recieve event
+char radioMessage[32]; // Buffer for message (nRF24 messages are limited to 32 bytes each)
+byte pipeNumber; // Stores the origin of the message (used in reciever mode)
+
+
+
+
+
+
+
+
 
 void setup() {
   // Pin modes,
   // !!! verify if encode pin is meant to be pull up or down!!!!!
   pinMode(LED_BUILTIN, OUTPUT); // Used for status indicator
   pinMode(FBPin, INPUT_ANALOG); // Battery pins
-  pinMode(RBPin, INPUT_ANALOG);
   pinMode(SBPin, INPUT_ANALOG);
   pinMode(encoderPin, INPUT_PULLUP); // Encoder interupt
-  pinMode(S50Pin, OUTPUT);
-  pinMode(S25Pin, OUTPUT);
-
-  blinker(2000, 5); // Start-up blinking, gives delay for debugging to connect
 
   attachInterrupt(encoderPin, encoderDetect, RISING); // Encoder interupt
   // !!! VERIFY IF FALLING OR RISING !!!
 
   // Start each serial line
   FRONTSERIAL.begin(rpiBaud);
-  REARSERIAL.begin(rpiBaud);
   GPSSERIAL.begin(gpsBaud);
+  DEBUGSERIAL.begin(debugBaud);
 
+  blinker(1500, 5); // Start-up blinking, gives delay for debugging to connect
+  
   // Debug timeout
   const int timeout = 2000; // Time out for debugger to be started if debugging
   unsigned long endTime = millis() + timeout; // End time for scanning
 
   if (debugMode) {
     // Set up debugging mode (USB connection)
-    DEBUGSERIAL.begin(debugBaud);
 
     while (!DEBUGSERIAL) {
       delay(100); // wait for serial port to connect. Needed for native USB
@@ -143,6 +161,8 @@ void setup() {
     lastPass[i] = 0; // Reset all encoder tick values
   }
 
+  setupRadio(); // Set up radio
+  
   blinker(100, 10); // Blink a few times on successful startup
 }
 
@@ -150,10 +170,6 @@ void loop() {
   if (FRONTSERIAL.available()) {
     // Data on front line
     processData('f');
-  }
-  if (REARSERIAL.available()) {
-    // Data on rear line
-    processData('r');
   }
   if (DEBUGSERIAL.available()) {
     // Data on debugging line
@@ -163,7 +179,7 @@ void loop() {
   // Periodic DHT measurement
   if (millis() > dhtTime) {
     humidity = dht.readHumidity() * 2;            // Humidity reading
-    temperature = 50 + dht.readTemperature() * 2; // Temperature reading
+    temperature = 50 + (dht.readTemperature() * 2); // Temperature reading
 
     dhtTime = millis() + dhtPeriod; // Sets next measurement time
   }
@@ -171,7 +187,6 @@ void loop() {
   // Periodic battery check
   if (millis() > batteryTime) {
     FBatt = batteryLevel('f');
-    RBatt = batteryLevel('r');
     SBatt = batteryLevel('s');
 
     batteryTime = millis() + batteryPeriod; // Sets next check
@@ -190,7 +205,15 @@ void loop() {
   if (GPSSERIAL.available()) {
     GPSCheck();
   }
-  delayMicroseconds(500); // Regular delay
+
+  //////////////////////////////////////////
+  // Telemetry Code
+  if (recievedRadioData) {
+    recievedRadioData = false; // Clear flag
+    radioRecieved();
+    processData('t');
+  }
+  delayMicroseconds(10); // Regular delay
 }
 
 void blinker (const int period, const byte repeats) {
