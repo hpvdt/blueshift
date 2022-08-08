@@ -15,13 +15,8 @@ byte batteryLevel (char line) {
       reading /= readingToV;
       reading *= fFactor;
       break;
-    case 'r':
-      reading = float(analogRead(FBPin));
-      reading /= readingToV;
-      reading *= rFactor;
-      break;
     case 's':
-      reading = float(analogRead(FBPin));
+      reading = float(analogRead(SBPin));
       reading /= readingToV;
       reading *= sFactor;
       break;
@@ -62,24 +57,6 @@ byte batteryLevel (char line) {
   }
   reading = constrain(reading, 0, 100); // Constrain it to reasonable values
 
-  // Control the LEDs on the spare board to indicate status
-  if (line == 's') {
-    if (reading > 50) {
-      digitalWrite(S50Pin, HIGH);
-      if (reading > 75) {
-        digitalWrite(S25Pin, HIGH);
-      }
-      else digitalWrite(S25Pin, LOW);
-    }
-    else {
-      digitalWrite(S50Pin, LOW);
-      if (reading > 25) {
-        digitalWrite(S25Pin, HIGH);
-      }
-      else digitalWrite(S25Pin, LOW);
-    }
-  }
-  
   return (int(reading));
 }
 
